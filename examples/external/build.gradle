@@ -1,0 +1,55 @@
+buildscript {
+    repositories {
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = 'SourceBuiltAgp'
+                    url = uri('/mnt/inputs/agp')
+                }
+            }
+            filter {
+                includeModule('com.android.tools.build', 'gradle')
+                includeModule('com.android.tools.build', 'builder')
+            }
+        }
+        maven {
+            url = uri('/mnt/inputs/dependencies')
+            metadataSources {
+                gradleMetadata()
+                mavenPom()
+            }
+        }
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:9.5.2'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21'
+    }
+}
+
+subprojects {
+    apply plugin: 'com.android.application'
+    apply plugin: 'org.jetbrains.kotlin.android'
+    println('External KGP loaded from ' + Class.forName('org.jetbrains.kotlin.gradle.plugin.KotlinAndroidPluginWrapper').protectionDomain.codeSource.location)
+    println('AGP loaded from ' + Class.forName("com.android.build.gradle.internal.plugins.AppPlugin").protectionDomain.codeSource.location)
+    println('D8 loaded from ' + Class.forName('com.android.tools.r8.D8').protectionDomain.codeSource.location)
+
+    repositories {
+        maven {
+            url = uri('/mnt/inputs/dependencies')
+            metadataSources {
+                gradleMetadata()
+                mavenPom()
+            }
+        }
+    }
+
+    android {
+        namespace = 'demo.' + project.name.replace('-', '')
+        compileSdk = 37
+        buildToolsVersion = '36.0.0'
+        defaultConfig {
+            minSdk = 24
+            targetSdk = 37
+        }
+    }
+}
