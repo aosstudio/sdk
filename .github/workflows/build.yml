@@ -1,0 +1,98 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      compare_google_sdk:
+        description: Compare APKs with the matching Google SDK on the runner
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap curl make
+
+      - name: Assemble the SDK
+        run: make build PYTHON=python
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aosstudio-sdk-linux-x86_64
+          path: out/dist/aosstudio-sdk-*-linux-x86_64.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Verify the SDK and sample APKs
+        env:
+          COMPARE_GOOGLE_SDK: ${{ inputs.compare_google_sdk }}
+        run: |
+          if ! bwrap --unshare-all --ro-bind / / -- /bin/true; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          args=()
+          if [[ "$COMPARE_GOOGLE_SDK" == true ]]; then
+            test -n "$ANDROID_HOME"
+            args+=(REFERENCE_SDK="$ANDROID_HOME")
+          fi
+          make verify PYTHON=python "${args[@]}"
+
+  publish:
+    needs: linux-x86_64
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    concurrency:
+      group: nightly-release
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: aosstudio-sdk-linux-x86_64
+          path: out/dist
+
+      - name: Publish nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          assets=(out/dist/aosstudio-sdk-*-linux-x86_64.tar.gz)
+          test "${#assets[@]}" -eq 1
+          test -s "${assets[0]}"
+
+          tag=latest
+          ref=$(gh api "repos/$GH_REPO/git/matching-refs/tags/$tag" \
+            --jq '.[] | select(.ref == "refs/tags/latest") | .ref')
+          if [[ -n "$ref" ]]; then
+            gh api --silent --method PATCH "repos/$GH_REPO/git/refs/tags/$tag" \
+              -f "sha=$GITHUB_SHA" -F force=true
+          else
+            gh api --silent --method POST "repos/$GH_REPO/git/refs" \
+              -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA"
+          fi
+
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+            gh release edit "$tag" --draft=false --prerelease --latest=false \
+              --title 'Nightly build' --notes ''
+          else
+            gh release create "$tag" "${assets[@]}" --verify-tag --prerelease --latest=false \
+              --title 'Nightly build' --notes ''
+          fi

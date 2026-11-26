@@ -1,0 +1,78 @@
+buildscript {
+    repositories {
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = 'SourceBuiltAgp'
+                    url = uri('/mnt/inputs/agp')
+                }
+            }
+            filter {
+                includeModule('com.android.tools.build', 'gradle')
+                includeModule('com.android.tools.build', 'builder')
+            }
+        }
+        maven {
+            url = uri('/mnt/inputs/dependencies')
+            metadataSources {
+                gradleMetadata()
+                mavenPom()
+            }
+        }
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:9.5.2'
+    }
+}
+
+subprojects {
+    apply plugin: 'com.android.application'
+    println('AGP loaded from ' + Class.forName("com.android.build.gradle.internal.plugins.AppPlugin").protectionDomain.codeSource.location)
+    println('D8 loaded from ' + Class.forName('com.android.tools.r8.D8').protectionDomain.codeSource.location)
+
+    repositories {
+        maven {
+            name = 'AuditedKotlinCompiler'
+            url = uri('/mnt/inputs/dependencies')
+            metadataSources {
+                mavenPom()
+                ignoreGradleMetadataRedirection()
+            }
+            content {
+                includeVersion('org.jetbrains.kotlin', 'kotlin-compiler-embeddable', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-script-runtime', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-daemon-embeddable', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-stdlib', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-reflect', '1.6.10')
+                includeVersion('org.jetbrains.kotlinx', 'kotlinx-coroutines-core-jvm', '1.8.0')
+                includeVersion('org.jetbrains.kotlinx', 'kotlinx-coroutines-bom', '1.8.0')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-build-tools-api', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-build-tools-impl', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-compiler-runner', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-daemon-client', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-scripting-common', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-scripting-compiler-embeddable', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-scripting-compiler-impl-embeddable', '2.2.10')
+                includeVersion('org.jetbrains.kotlin', 'kotlin-scripting-jvm', '2.2.10')
+                includeVersion('org.jetbrains', 'annotations', '13.0')
+            }
+        }
+        maven {
+            url = uri('/mnt/inputs/dependencies')
+            metadataSources {
+                gradleMetadata()
+                mavenPom()
+            }
+        }
+    }
+
+    android {
+        namespace = 'demo.' + project.name.replace('-', '')
+        compileSdk = 37
+        buildToolsVersion = '36.0.0'
+        defaultConfig {
+            minSdk = 24
+            targetSdk = 37
+        }
+    }
+}

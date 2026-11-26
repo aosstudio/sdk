@@ -1,0 +1,72 @@
+{
+  "series": "37.0",
+  "default_packages": [
+    "platforms;android-37.0",
+    "build-tools;36.0.0",
+    "platform-tools",
+    "cmdline-tools;24.0"
+  ],
+  "platform": {
+    "api_level": 37,
+    "extension_level": 22,
+    "layoutlib_api": 15
+  },
+  "components": {
+    "sdk-platform": {
+      "name": "aosstudio-sdk-platform-37.0.zip",
+      "url": "https://api.github.com/repos/aosstudio/sdk-platform/releases/assets/794597463?download=1",
+      "sha256": "98955d1b7eac26a1550d9a5b53c4a896431c299e974680603c89436fc0085950",
+      "package": "platforms;android-37.0",
+      "revision": [
+        1
+      ]
+    },
+    "build-tools": {
+      "name": "aosstudio-build-tools-36.0.0-linux-x86_64.zip",
+      "url": "https://api.github.com/repos/aosstudio/build-tools/releases/assets/794512698?download=1",
+      "sha256": "f4238d09a4680d1f292599f0fd85855614703b1666e438694a2d8ea7366e64e5",
+      "package": "build-tools;36.0.0",
+      "revision": [
+        36,
+        0,
+        0
+      ]
+    },
+    "cmdline-tools": {
+      "name": "aosstudio-cmdline-tools-24.0-linux-x86_64.zip",
+      "url": "https://api.github.com/repos/aosstudio/cmdline-tools/releases/assets/794601588?download=1",
+      "sha256": "fac0be6fec3b260ce24fe4c1b200f93c2003f191d02cfea51399c01d6979a84a",
+      "package": "cmdline-tools;24.0",
+      "revision": [
+        24,
+        0
+      ]
+    },
+    "platform-tools": {
+      "name": "aosstudio-platform-tools-37.0.0-linux-x86_64.zip",
+      "url": "https://api.github.com/repos/aosstudio/platform-tools/releases/assets/794466406?download=1",
+      "sha256": "aa6bfffa076fbf22fffc16906e61c70b7540109e3a65fef13ef6ce63f051d7cb",
+      "package": "platform-tools",
+      "revision": [
+        37,
+        0,
+        0
+      ]
+    },
+    "jdk": {
+      "name": "aosstudio-jdk-21.0.13.1-2-linux-x86_64.tar.gz",
+      "url": "https://api.github.com/repos/aosstudio/jdk/releases/assets/793583697?download=1",
+      "sha256": "38ea3237e496258a103aa482a7733a08bef94572473625d47a2f5a9854948840"
+    },
+    "agp": {
+      "name": "aosstudio-agp-9.5.2-maven.tar.gz",
+      "url": "https://api.github.com/repos/aosstudio/agp/releases/assets/794320159?download=1",
+      "sha256": "791353ede363f525add0081de22f83da40156c53b740a81c902d288adcae1066"
+    },
+    "gradle": {
+      "name": "gradle-9.6.0-bin.zip",
+      "url": "https://downloads.gradle.org/distributions/gradle-9.6.0-bin.zip",
+      "sha256": "bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01"
+    }
+  }
+}
