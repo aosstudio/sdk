@@ -14,7 +14,7 @@ from zipfile import BadZipFile, ZipFile
 from inputs import RELEASE, release
 from install_sdk import default_packages
 from sdk_runtime import sandbox
-from sdk_feed import ASSET_LIST, sha256
+from sdk_feed import index_digests, sha256
 
 ROOT = Path(__file__).resolve().parents[1]
 CERT_DIGEST = re.compile(
@@ -348,16 +348,13 @@ def test_sdk(args: argparse.Namespace) -> Path:
 
     output.mkdir()
     sdk = output / "sdk"
-    asset_list = args.feed / ASSET_LIST
-    feed_digest = sha256(asset_list)
+    indexes = index_digests(args.feed)
     run(
         [
             sys.executable,
             str(ROOT / "scripts/install_sdk.py"),
             "--feed",
             str(args.feed),
-            "--public-key",
-            str(args.public_key),
             "--runtime" if args.runtime else "--jdk",
             str(args.runtime or args.jdk),
             "--manager",
@@ -367,8 +364,8 @@ def test_sdk(args: argparse.Namespace) -> Path:
         ],
         output / "install.log",
     )
-    if sha256(asset_list) != feed_digest:
-        raise ValueError("Signed asset list changed during installation")
+    if index_digests(args.feed) != indexes:
+        raise ValueError("SDK indexes changed during installation")
     results = build_samples(args, sdk, output, args.gradle_cache, repeats=2)
 
     manifest = output / "manifest.json"
@@ -379,7 +376,7 @@ def test_sdk(args: argparse.Namespace) -> Path:
                 "component": "sdk",
                 "state": "verified-offline-app-builds",
                 "lock_sha256": lock_digest,
-                "signed_asset_list_sha256": feed_digest,
+                "sdk_index_sha256": indexes,
                 "apk_sha256": results,
             },
             indent=2,
@@ -404,10 +401,9 @@ def main() -> int:
         "external-kotlin-project",
     ):
         parser.add_argument(f"--{name}", type=Path, required=True)
-    parser.add_argument("--bundle", type=Path)
-    parser.add_argument("--trusted-key", type=Path)
-    parser.add_argument("--feed", type=Path)
-    parser.add_argument("--public-key", type=Path)
+    provider = parser.add_mutually_exclusive_group(required=True)
+    provider.add_argument("--bundle", type=Path)
+    provider.add_argument("--feed", type=Path)
     java = parser.add_mutually_exclusive_group(required=True)
     java.add_argument("--runtime", type=Path)
     java.add_argument("--jdk", type=Path)
@@ -434,8 +430,6 @@ def main() -> int:
             if value is not None:
                 setattr(args, name, value.resolve(strict=True))
         if args.bundle:
-            if args.feed or args.public_key:
-                parser.error("--bundle already supplies --feed and --public-key")
             with TemporaryDirectory(
                 prefix=".verify-feed-", dir=args.out.parent
             ) as work:
@@ -443,18 +437,9 @@ def main() -> int:
                 with tarfile.open(args.bundle) as archive:
                     archive.extractall(bundle, filter="data")
                 args.feed = bundle / "feed"
-                args.public_key = bundle / "feed-public.pem"
-                if args.trusted_key:
-                    if args.trusted_key.read_bytes() != args.public_key.read_bytes():
-                        raise ValueError(
-                            "Bundle key does not match the trusted SDK public key"
-                        )
-                    args.public_key = args.trusted_key
                 print(test_sdk(args))
-        elif args.feed and args.public_key:
-            print(test_sdk(args))
         else:
-            parser.error("Specify --bundle or both --feed and --public-key")
+            print(test_sdk(args))
     except (
         OSError,
         ValueError,

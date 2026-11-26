@@ -17,12 +17,10 @@ from xml.etree import ElementTree
 
 from sdk_runtime import sandbox
 from sdk_feed import (
-    ASSET_LIST,
     SHA256,
     rename_directory,
-    sha256,
-    validate_indexes,
-    verify_provider,
+    index_digests,
+    stage_provider,
 )
 
 PACKAGE_PATH = re.compile(r"[a-zA-Z0-9._-]+(?:;[a-zA-Z0-9._-]+)*")
@@ -150,7 +148,6 @@ def write_repair_candidate(directory: Path, candidate: RepairCandidate) -> None:
 def install(
     destination: Path,
     provider: Path,
-    public_key: Path,
     runtime: Path | None,
     manager: Path,
     packages: list[str],
@@ -211,10 +208,9 @@ def install(
             raise FileExistsError(f"SDK destination already exists: {destination}")
         feed = Path(work) / "feed"
         feed.mkdir()
-        assets = verify_provider(provider, feed, public_key)
-        validate_indexes(feed, assets, packages)
+        stage_provider(provider, feed, packages)
         operation = hashlib.sha256(
-            json.dumps([sha256(feed / ASSET_LIST), sorted(packages)]).encode("utf-8")
+            json.dumps([index_digests(feed), sorted(packages)]).encode("utf-8")
         ).hexdigest()
         if completed_repair is not None:
             if completed_repair != operation:
@@ -303,7 +299,6 @@ def main() -> int:
         description="Install or repair an SDK from a verified local feed."
     )
     parser.add_argument("--feed", type=Path)
-    parser.add_argument("--public-key", type=Path)
     parser.add_argument("--destination", type=Path)
     java = parser.add_mutually_exclusive_group()
     java.add_argument("--runtime", type=Path, help="Builder JDK rootfs")
@@ -326,7 +321,7 @@ def main() -> int:
     )
     parser.add_argument("package", nargs="*")
     args = parser.parse_args()
-    inputs = (args.feed, args.public_key, args.runtime or args.jdk, args.manager)
+    inputs = (args.feed, args.runtime or args.jdk, args.manager)
     try:
         if args.default_packages:
             if (
@@ -348,13 +343,12 @@ def main() -> int:
         else:
             if any(value is None for value in inputs):
                 parser.error(
-                    "Installation requires --feed, --public-key, --manager and either --jdk or --runtime"
+                    "Installation requires --feed, --manager and either --jdk or --runtime"
                 )
             print(
                 install(
                     args.destination,
                     args.feed,
-                    args.public_key,
                     args.runtime.resolve(strict=True) if args.runtime else None,
                     args.manager.resolve(strict=True),
                     args.package or default_packages(),

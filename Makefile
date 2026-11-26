@@ -15,9 +15,7 @@ fetch:
 	$(PYTHON) scripts/inputs.py --out "$(INPUTS)"
 
 build: fetch
-	$(PYTHON) scripts/assemble_sdk.py --inputs "$(INPUTS)" --out out/dist \
-	  $(if $(SIGNING_KEY),--signing-key "$(SIGNING_KEY)") \
-	  $(if $(TRUSTED_KEY),--trusted-key "$(TRUSTED_KEY)")
+	$(PYTHON) scripts/assemble_sdk.py --inputs "$(INPUTS)" --out out/dist
 
 verify:
 	mkdir -p "$(dir $(SDK_TEST_OUTPUT))" "$(INPUTS)/gradle-cache"
@@ -25,5 +23,4 @@ verify:
 	  --manager "$(INPUTS)/manager" --gradle "$(INPUTS)/gradle" \
 	  --gradle-cache "$(INPUTS)/gradle-cache" --inputs "$(INPUTS)/maven" \
 	  --project examples/built-in --external-kotlin-project examples/external \
-	  $(if $(TRUSTED_KEY),--trusted-key "$(TRUSTED_KEY)") \
 	  $(if $(REFERENCE_SDK),--reference-sdk "$(REFERENCE_SDK)") --out "$(SDK_TEST_OUTPUT)"

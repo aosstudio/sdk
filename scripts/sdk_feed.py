@@ -1,26 +1,30 @@
 from ctypes import CDLL, c_char_p, c_int, c_uint, get_errno
 import hashlib
+from io import FileIO
 import json
 import os
 from pathlib import Path
 import re
 import shutil
 import stat
-import subprocess
-from typing import BinaryIO, TypedDict
+from typing import TypedDict
 from xml.etree import ElementTree
 
 
-ASSET_LIST = "release-assets.sha256"
 CHUNK_MANIFEST = "release-chunks.json"
-ASSET_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]*\.(?:xml|zip)")
-ASSET_ENTRY = re.compile(r"([0-9a-f]{64})  (\S+)")
+ZIP_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]*\.zip")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 REPOSITORY_INDEXES = ("repository2-3.xml", "repository2-4.xml")
 ADDONS_LIST = "addons_list-7.xml"
 SYSTEM_IMAGE_INDEX = "sys-img2-5.xml"
 CHUNK_SIZE = 1024**3
 BUFFER_SIZE = 1024**2
+
+
+class Archive(TypedDict):
+    size: int
+    algorithm: str
+    checksum: str
 
 
 class Part(TypedDict):
@@ -32,13 +36,12 @@ class Part(TypedDict):
 class ChunkedArchive(TypedDict):
     size: int
     sha256: str
-    packages: list[str]
     parts: list[Part]
 
 
-def open_asset(source: Path) -> BinaryIO:
+def open_asset(source: Path) -> FileIO:
     fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    stream = os.fdopen(fd, "rb")
+    stream = FileIO(fd, "rb")
     if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
         stream.close()
         raise ValueError(f"Expected a regular file: {source}")
@@ -73,38 +76,29 @@ def rename_directory(
 
 
 def read_chunk_manifest(
-    path: Path, assets: dict[str, str]
+    feed: Path, records: dict[str, Archive]
 ) -> dict[str, ChunkedArchive]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if (
-        not isinstance(data, dict)
-        or type(data.get("format")) is not int
-        or data["format"] != 1
-    ):
+    with open_asset(feed / CHUNK_MANIFEST) as stream:
+        data = json.load(stream)
+    if not isinstance(data, dict) or data.get("format") != 1:
         raise ValueError("Unsupported SDK chunk manifest")
     archives = data.get("archives")
     if not isinstance(archives, dict):
         raise ValueError("Expected archive records in the SDK chunk manifest")
     result: dict[str, ChunkedArchive] = {}
     for name, archive in archives.items():
-        if (
-            not name.endswith(".zip")
-            or name not in assets
-            or not isinstance(archive, dict)
-        ):
+        if name not in records or not isinstance(archive, dict):
             raise ValueError(f"Unknown ZIP in chunk manifest: {name}")
-        size, parts, packages = (
-            archive.get(key) for key in ("size", "parts", "packages")
+        size, checksum, parts = (
+            archive.get(key) for key in ("size", "sha256", "parts")
         )
         if (
-            archive.get("sha256") != assets[name]
-            or type(size) is not int
-            or size <= 0
+            type(size) is not int
+            or size != records[name]["size"]
+            or not isinstance(checksum, str)
+            or not SHA256.fullmatch(checksum)
             or not isinstance(parts, list)
             or not parts
-            or not isinstance(packages, list)
-            or not packages
-            or not all(isinstance(package, str) for package in packages)
         ):
             raise ValueError(f"Invalid chunk manifest archive record: {name}")
         verified: list[Part] = []
@@ -123,15 +117,8 @@ def read_chunk_manifest(
                 {"file": expected_file, "size": part["size"], "sha256": part["sha256"]}
             )
         if sum(part["size"] for part in verified) != size:
-            raise ValueError(
-                f"Chunk sizes do not add up to the signed archive size: {name}"
-            )
-        result[name] = {
-            "size": size,
-            "sha256": assets[name],
-            "packages": packages,
-            "parts": verified,
-        }
+            raise ValueError(f"Chunk sizes do not add up to the archive size: {name}")
+        result[name] = {"size": size, "sha256": checksum, "parts": verified}
     return result
 
 
@@ -158,110 +145,110 @@ def restore_archive(feed: Path, destination: Path, archive: ChunkedArchive) -> N
         raise ValueError(f"Reconstructed archive SHA-256 mismatch: {destination.name}")
 
 
-def verify_provider(feed: Path, staged: Path, public_key: Path) -> dict[str, str]:
-    signature = f"{ASSET_LIST}.sig"
-    for name in (ASSET_LIST, signature):
-        copy_asset(feed / name, staged / name)
-    subprocess.run(
-        [
-            "openssl",
-            "pkeyutl",
-            "-verify",
-            "-pubin",
-            "-inkey",
-            str(public_key),
-            "-rawin",
-            "-in",
-            str(staged / ASSET_LIST),
-            "-sigfile",
-            str(staged / signature),
-        ],
-        check=True,
-    )
-    assets: dict[str, str] = {}
-    for line in (staged / ASSET_LIST).read_text(encoding="ascii").splitlines():
-        entry = ASSET_ENTRY.fullmatch(line)
-        if entry is None:
-            raise ValueError(f"Invalid signed asset record: {line!r}")
-        digest, name = entry.groups()
-        if (
-            name != CHUNK_MANIFEST and not ASSET_NAME.fullmatch(name)
-        ) or name in assets:
-            raise ValueError(f"Invalid or duplicate signed asset name: {name!r}")
-        assets[name] = digest
-    if not assets.keys() & REPOSITORY_INDEXES:
-        raise ValueError("The feed needs a signed SDK repository index")
-
-    def copy_verified(name: str) -> None:
-        target = staged / name
-        copy_asset(feed / name, target)
-        if sha256(target) != assets[name]:
-            raise ValueError(f"Signed asset SHA-256 mismatch: {name}")
-
-    chunks: dict[str, ChunkedArchive] = {}
-    if CHUNK_MANIFEST in assets:
-        copy_verified(CHUNK_MANIFEST)
-        chunks = read_chunk_manifest(staged / CHUNK_MANIFEST, assets)
-    for name in assets:
-        if name in chunks:
-            restore_archive(feed, staged / name, chunks[name])
-        elif name != CHUNK_MANIFEST:
-            copy_verified(name)
-    if chunks:
-        associations = validate_indexes(staged, assets, ())
-        for name, archive in chunks.items():
-            if sorted(associations.get(name, set())) != archive["packages"]:
-                raise ValueError(
-                    f"Signed package paths do not match SDK indexes: {name}"
-                )
-    return assets
+def archive_record(complete: ElementTree.Element, index: str) -> tuple[str, Archive]:
+    asset = complete.findtext("url", "")
+    if not ZIP_NAME.fullmatch(asset):
+        raise ValueError(f"Expected a local ZIP name in {index}: {asset!r}")
+    checksum = complete.find("checksum")
+    algorithm = checksum.attrib.get("type", "sha1") if checksum is not None else ""
+    value = checksum.text if checksum is not None else None
+    if algorithm not in {"sha1", "sha256"} or not value:
+        raise ValueError(f"Expected an archive checksum for {asset}")
+    length = hashlib.new(algorithm).digest_size * 2
+    if not re.fullmatch(f"[0-9a-f]{{{length}}}", value):
+        raise ValueError(f"Invalid archive checksum for {asset}")
+    size = int(complete.findtext("size", "0"))
+    if size <= 0:
+        raise ValueError(f"Invalid archive size for {asset}")
+    return asset, {"size": size, "algorithm": algorithm, "checksum": value}
 
 
-def validate_indexes(
-    feed: Path, assets: dict[str, str], packages: tuple[str, ...] | list[str]
-) -> dict[str, set[str]]:
-    associations: dict[str, set[str]] = {}
+def index_names(feed: Path) -> list[str]:
+    return [
+        name
+        for name in (*REPOSITORY_INDEXES, ADDONS_LIST, SYSTEM_IMAGE_INDEX)
+        if (feed / name).exists() or (feed / name).is_symlink()
+    ]
+
+
+def index_digests(feed: Path) -> dict[str, str]:
+    return {name: sha256(feed / name) for name in index_names(feed)}
+
+
+def read_indexes(feed: Path, packages: list[str]) -> dict[str, Archive]:
+    records: dict[str, Archive] = {}
 
     def read_index(index: str) -> set[str]:
         root = ElementTree.parse(feed / index).getroot()
-        for url in root.iter("url"):
-            name = url.text or ""
-            if not name.endswith(".zip") or name not in assets:
-                raise ValueError(
-                    f"Archive URL must name a signed ZIP in {index}: {name!r}"
-                )
         available: set[str] = set()
+        asset_names: set[str] = set()
         for package in root.findall("remotePackage"):
             path = package.attrib.get("path")
             if not path:
                 continue
-            for url in package.iter("url"):
-                associations.setdefault(url.text or "", set()).add(path)
-            if any(
-                archive.find("complete/url") is not None
-                and archive.findtext("host-os", "linux") == "linux"
-                and archive.findtext("host-arch", "x64") == "x64"
-                and archive.findtext("host-bits", "64") == "64"
-                and archive.findtext("jvm-bits", "64") == "64"
-                for archive in package.findall("archives/archive")
-            ):
-                available.add(path)
+            for archive in package.findall("archives/archive"):
+                complete = archive.find("complete")
+                if complete is None:
+                    continue
+                name, record = archive_record(complete, index)
+                asset_names.add(name)
+                if records.setdefault(name, record) != record:
+                    raise ValueError(f"Conflicting archive checksums for {name}")
+                if (
+                    archive.findtext("host-os", "linux") == "linux"
+                    and archive.findtext("host-arch", "x64") == "x64"
+                    and archive.findtext("jvm-bits", "64") == "64"
+                ):
+                    available.add(path)
+        if any(url.text not in asset_names for url in root.iter("url")):
+            raise ValueError(f"Unexpected archive URL in {index}")
         return available
 
+    files = index_names(feed)
+    indexes = [name for name in REPOSITORY_INDEXES if name in files]
+    if not indexes:
+        raise ValueError("The feed needs an SDK repository index")
     images: set[str] = set()
-    if ADDONS_LIST in assets:
+    if ADDONS_LIST in files:
         addons = ElementTree.parse(feed / ADDONS_LIST).getroot()
         if len(addons):
             urls = [url.text for url in addons.iter("url")]
-            if urls != [SYSTEM_IMAGE_INDEX] or SYSTEM_IMAGE_INDEX not in assets:
-                raise ValueError("Expected a signed local system-image index")
+            if urls != [SYSTEM_IMAGE_INDEX] or SYSTEM_IMAGE_INDEX not in files:
+                raise ValueError("Expected a local system-image index")
             images = read_index(SYSTEM_IMAGE_INDEX)
-    for index in REPOSITORY_INDEXES:
-        if index not in assets:
-            continue
+    for index in indexes:
         available = read_index(index) | images
         if missing := set(packages).difference(available):
             raise ValueError(
                 f"Missing packages in {index}: {', '.join(sorted(missing))}"
             )
-    return associations
+    return records
+
+
+def verify_archives(feed: Path, records: dict[str, Archive]) -> None:
+    for name, record in records.items():
+        with open_asset(feed / name) as stream:
+            size = os.fstat(stream.fileno()).st_size
+            if size != record["size"]:
+                raise ValueError(f"Archive size differs from the SDK index: {name}")
+            digest = hashlib.file_digest(stream, record["algorithm"]).hexdigest()
+        if digest != record["checksum"]:
+            raise ValueError(f"Archive checksum differs from the SDK index: {name}")
+
+
+def stage_provider(source: Path, staged: Path, packages: list[str]) -> None:
+    for name in index_names(source):
+        copy_asset(source / name, staged / name)
+    records = read_indexes(staged, packages)
+    manifest = source / CHUNK_MANIFEST
+    chunks = (
+        read_chunk_manifest(source, records)
+        if manifest.exists() or manifest.is_symlink()
+        else {}
+    )
+    for name in records:
+        if name in chunks:
+            restore_archive(source, staged / name, chunks[name])
+        else:
+            copy_asset(source / name, staged / name)
+    verify_archives(staged, records)

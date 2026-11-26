@@ -26,19 +26,10 @@ jobs:
       - name: Install host tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends bubblewrap curl make openssl
+          sudo apt-get install --yes --no-install-recommends bubblewrap curl make
 
-      - name: Assemble and sign the SDK
-        env:
-          SDK_SIGNING_KEY: ${{ secrets.SDK_SIGNING_KEY }}
-        run: |
-          test -n "$SDK_SIGNING_KEY"
-          umask 077
-          key=$(mktemp "$RUNNER_TEMP/sdk-signing.XXXXXXXX")
-          trap 'rm -f "$key"' EXIT
-          printf '%s\n' "$SDK_SIGNING_KEY" > "$key"
-          unset SDK_SIGNING_KEY
-          make build PYTHON=python SIGNING_KEY="$key" TRUSTED_KEY=keys/feed-public.pem
+      - name: Assemble the SDK
+        run: make build PYTHON=python
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -47,7 +38,7 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-      - name: Verify the signed SDK and sample APKs
+      - name: Verify the SDK and sample APKs
         env:
           COMPARE_GOOGLE_SDK: ${{ inputs.compare_google_sdk }}
         run: |
@@ -59,7 +50,7 @@ jobs:
             test -n "$ANDROID_HOME"
             args+=(REFERENCE_SDK="$ANDROID_HOME")
           fi
-          make verify PYTHON=python TRUSTED_KEY=keys/feed-public.pem "${args[@]}"
+          make verify PYTHON=python "${args[@]}"
 
   publish:
     needs: linux-x86_64

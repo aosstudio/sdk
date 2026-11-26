@@ -4,13 +4,12 @@ import gzip
 import hashlib
 from pathlib import Path
 import shutil
-import subprocess
 import tarfile
 from tempfile import TemporaryDirectory
 from xml.etree import ElementTree as ET
 
 from inputs import Release, release
-from sdk_feed import ASSET_LIST, sha256, validate_indexes
+from sdk_feed import read_indexes, sha256
 
 XSI = "http://www.w3.org/2001/XMLSchema-instance"
 GENERIC = "http://schemas.android.com/repository/android/generic/02"
@@ -75,34 +74,14 @@ def pack_file(info: tarfile.TarInfo) -> tarfile.TarInfo:
     return info
 
 
-def assemble(
-    inputs: Path, output: Path, key: Path | None, trusted_key: Path | None
-) -> Path:
+def assemble(inputs: Path, output: Path) -> Path:
     lock = release()
     output.mkdir(parents=True, exist_ok=True)
     name = f"aosstudio-sdk-{lock['series']}-linux-x86_64.tar.gz"
     with TemporaryDirectory(prefix=".assemble-", dir=output) as temporary:
         stage = Path(temporary)
-        bundle = stage / "bundle"
-        feed = bundle / "feed"
-        feed.mkdir(parents=True)
-        if key is None:
-            key = stage / "test-private.pem"
-            subprocess.run(
-                ["openssl", "genpkey", "-algorithm", "ED25519", "-out", str(key)],
-                check=True,
-            )
-        public_key = bundle / "feed-public.pem"
-        subprocess.run(
-            ["openssl", "pkey", "-in", str(key), "-pubout", "-out", str(public_key)],
-            check=True,
-        )
-        if (
-            trusted_key is not None
-            and trusted_key.read_bytes() != public_key.read_bytes()
-        ):
-            raise ValueError("Signing key does not match the trusted SDK public key")
-
+        feed = stage / "feed"
+        feed.mkdir()
         for entry in lock["components"].values():
             if "package" in entry:
                 asset = feed / entry["name"]
@@ -110,28 +89,7 @@ def assemble(
                 if sha256(asset) != entry["sha256"]:
                     raise ValueError(f"SHA-256 mismatch for {asset.name}")
         write_indexes(feed, lock)
-        assets = {asset.name: sha256(asset) for asset in sorted(feed.iterdir())}
-        validate_indexes(feed, assets, lock["default_packages"])
-        listing = feed / ASSET_LIST
-        listing.write_text(
-            "".join(f"{digest}  {file}\n" for file, digest in assets.items()),
-            encoding="ascii",
-        )
-        subprocess.run(
-            [
-                "openssl",
-                "pkeyutl",
-                "-sign",
-                "-inkey",
-                str(key),
-                "-rawin",
-                "-in",
-                str(listing),
-                "-out",
-                str(feed / f"{ASSET_LIST}.sig"),
-            ],
-            check=True,
-        )
+        read_indexes(feed, lock["default_packages"])
 
         archive_path = stage / name
         with (
@@ -142,20 +100,15 @@ def assemble(
             tarfile.open(fileobj=compressed, mode="w|") as archive,
         ):
             archive.add(feed, arcname="feed", filter=pack_file)
-            archive.add(public_key, arcname=public_key.name, filter=pack_file)
         return archive_path.replace(output / name)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Assemble and sign the SDK feed bundle."
-    )
+    parser = argparse.ArgumentParser(description="Assemble the SDK feed bundle.")
     parser.add_argument("--inputs", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--signing-key", type=Path)
-    parser.add_argument("--trusted-key", type=Path)
     args = parser.parse_args()
-    print(assemble(args.inputs, args.out, args.signing_key, args.trusted_key))
+    print(assemble(args.inputs, args.out))
 
 
 if __name__ == "__main__":
