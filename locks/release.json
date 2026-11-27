@@ -14,11 +14,11 @@
   "components": {
     "sdk-platform": {
       "name": "aosstudio-sdk-platform-37.0.zip",
-      "url": "https://api.github.com/repos/aosstudio/sdk-platform/releases/assets/794597463?download=1",
-      "sha256": "98955d1b7eac26a1550d9a5b53c4a896431c299e974680603c89436fc0085950",
+      "url": "https://api.github.com/repos/aosstudio/sdk-platform/releases/assets/802487063?download=1",
+      "sha256": "4221bc55f5b1dc7c493795d2ca6b667cbe73b1d0e86fe5e551e68810b432875d",
       "package": "platforms;android-37.0",
       "revision": [
-        1
+        2
       ]
     },
     "build-tools": {
